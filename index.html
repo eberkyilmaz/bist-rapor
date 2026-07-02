@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>BIST Rapor</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f4fb; }
+  #giris { max-width: 420px; margin: 15vh auto; padding: 24px; background: #fff;
+           border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+  #giris h1 { font-size: 22px; }
+  #parola { width: 100%; box-sizing: border-box; font-size: 20px; padding: 10px;
+            margin: 10px 0; border: 1px solid #bbb; border-radius: 8px; }
+  #ac { width: 100%; font-size: 20px; padding: 12px; border: 0; border-radius: 8px;
+        background: #2b4eff; color: #fff; cursor: pointer; }
+  #hata { color: #c62828; font-size: 16px; min-height: 22px; }
+  #icerik { display: none; }
+</style>
+</head>
+<body>
+<div id="giris">
+  <h1>BIST Analiz Raporu</h1>
+  <p>Raporu görmek için parolayı girin. Bu cihazda hatırlanır.</p>
+  <input id="parola" type="password" placeholder="Parola" autocomplete="current-password">
+  <p id="hata"></p>
+  <button id="ac">Raporu Aç</button>
+</div>
+<div id="icerik"></div>
+<script>
+const YENILEME_MS = 300000; // 5 dk otomatik yenileme
+const enc = new TextEncoder(), dec = new TextDecoder();
+const b64coz = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function anahtarTur(parola, salt) {
+  const temel = await crypto.subtle.importKey(
+    "raw", enc.encode(parola), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 600000, hash: "SHA-256" },
+    temel, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+}
+
+async function raporuCoz(parola) {
+  const yanit = await fetch("rapor.enc.json", { cache: "no-store" });
+  if (!yanit.ok) throw new Error("rapor dosyasına ulaşılamadı");
+  const paket = await yanit.json();
+  const anahtar = await anahtarTur(parola, b64coz(paket.salt));
+  const acik = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: b64coz(paket.nonce) }, anahtar, b64coz(paket.veri));
+  return dec.decode(acik);
+}
+
+async function goster(parola) {
+  const html = await raporuCoz(parola);
+  document.getElementById("icerik").innerHTML = html;
+  document.getElementById("giris").style.display = "none";
+  document.getElementById("icerik").style.display = "block";
+  localStorage.setItem("bistParola", parola);
+}
+
+async function dene() {
+  const parola = document.getElementById("parola").value;
+  const hata = document.getElementById("hata");
+  hata.textContent = "Açılıyor…";
+  try { await goster(parola); }
+  catch (e) {
+    localStorage.removeItem("bistParola");
+    hata.textContent = e.name === "OperationError"
+      ? "Parola yanlış — tekrar deneyin."
+      : "Hata: " + e.message;
+  }
+}
+
+document.getElementById("ac").addEventListener("click", dene);
+document.getElementById("parola").addEventListener("keydown",
+  e => { if (e.key === "Enter") dene(); });
+
+const kayitli = localStorage.getItem("bistParola");
+if (kayitli) { document.getElementById("parola").value = kayitli; dene(); }
+
+setInterval(() => {
+  const p = localStorage.getItem("bistParola");
+  if (p) goster(p).catch(() => {});
+}, YENILEME_MS);
+</script>
+</body>
+</html>
